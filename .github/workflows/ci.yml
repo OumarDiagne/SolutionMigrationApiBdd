@@ -4,7 +4,8 @@ on:
   push:
     branches: [main, master]
   pull_request:
-
+env:
+ TESTS_MINIMUM : 100
 jobs:
   tests:
     name: Build et tests (unitaires + intégration)
@@ -61,7 +62,7 @@ jobs:
           fi
           total=$(grep -o 'total="[0-9]*"' "$fichier" | head -n 1 | grep -o '[0-9]*')
           echo "Tests exécutés : $total"
-          if [ -z "$total" ] || [ "$total" -lt 100 ]; then
+          if [ -z "$total" ] || [ "$total" -lt ${{ env.TESTS_MINIMUM }} ]; then
             echo "::error::Trop peu de tests exécutés ($total)."
             exit 1
           fi
