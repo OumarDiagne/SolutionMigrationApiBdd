@@ -48,12 +48,7 @@ jobs:
         run: dotnet build SolutionMigrationApiBdd.sln --configuration Release --no-restore
 
       - name: Tests
-        run: >
-          dotnet test MigrationApiBdd.Tests/MigrationApiBdd.Tests.csproj
-          --configuration Release --no-build
-          --logger "trx;LogFileName=resultats-tests.trx"
-          --logger "console;verbosity=normal"
-          --results-directory ./resultats
+        run: dotnet test MigrationApiBdd.Tests/MigrationApiBdd.Tests.csproj -c Release --no-build --logger trx --results-directory ./resultats --verbosity normal
 
       # Garde-fou : un « vert » sans test exécuté ne doit pas passer inaperçu.
       - name: Vérification que les tests se sont réellement exécutés
