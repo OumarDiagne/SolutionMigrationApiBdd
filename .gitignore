@@ -1,0 +1,18 @@
+# Visual Studio / .NET
+.vs/
+bin/
+obj/
+*.user
+*.suo
+*.userprefs
+TestResults/
+resultats/
+
+# Sauvegardes locales
+_backup-*/
+
+# Secrets : ne jamais versionner (utiliser les user-secrets en local, les secrets GitHub/Azure ensuite)
+appsettings.*.local.json
+secrets.json
+*.pfx
+.env

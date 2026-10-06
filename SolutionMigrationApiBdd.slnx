@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="MigrationApiBdd/MigrationApiBdd.csproj" />
+  <Project Path="MigrationApiBdd.Tests/MigrationApiBdd.Tests.csproj" />
+</Solution>
