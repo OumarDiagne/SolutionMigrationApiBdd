@@ -49,10 +49,27 @@ jobs:
 
       - name: Tests
         run: >
-          dotnet test SolutionMigrationApiBdd.sln
+          dotnet test MigrationApiBdd.Tests/MigrationApiBdd.Tests.csproj
           --configuration Release --no-build
           --logger "trx;LogFileName=resultats-tests.trx"
+          --logger "console;verbosity=normal"
           --results-directory ./resultats
+
+      # Garde-fou : un « vert » sans test exécuté ne doit pas passer inaperçu.
+      - name: Vérification que les tests se sont réellement exécutés
+        if: always()
+        run: |
+          fichier=$(ls resultats/*.trx 2>/dev/null | head -n 1)
+          if [ -z "$fichier" ]; then
+            echo "::error::Aucun résultat de test : les tests ne se sont pas exécutés."
+            exit 1
+          fi
+          total=$(grep -o 'total="[0-9]*"' "$fichier" | head -n 1 | grep -o '[0-9]*')
+          echo "Tests exécutés : $total"
+          if [ -z "$total" ] || [ "$total" -lt 100 ]; then
+            echo "::error::Trop peu de tests exécutés ($total)."
+            exit 1
+          fi
 
       - name: Publication des résultats de tests
         if: always()
