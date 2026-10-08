@@ -144,9 +144,10 @@ var services = scope.ServiceProvider;
 await IdentitySeedData.SeedRolesAsync(services);
 await IdentitySeedData.SeedAdminAsync(services, builder.Configuration);
 
+// Données de démonstration : seulement si SeedDemoData=true (local) ET aucun client en base.
 var context = services.GetRequiredService<MigApiContext>();
 
-if (!await context.Clients.AnyAsync())
+if (builder.Configuration.GetValue<bool>("SeedDemoData") && !await context.Clients.AnyAsync())
 {
     await SeedData.SeedAsync(services);
 }

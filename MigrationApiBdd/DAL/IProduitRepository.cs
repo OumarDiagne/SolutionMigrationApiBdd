@@ -12,6 +12,8 @@ namespace MigrationApiBdd.DAL
         Task<Produits?> GetProduitByIdAsync(int id,CancellationToken cancellationToken);
         Task SaveChangeAsync(CancellationToken cancellationToken);
         void SetOriginalRowVersion(Produits produitTracke, byte[] rowVersion);
+        Task<bool> TryAppliquerVariationStockAsync(int produitId, int variation, CancellationToken cancellationToken);
+        Task RechargerAsync(Produits produit, CancellationToken cancellationToken);
         Task<Produits> UpdateProduitAsync(Produits updateproduit,CancellationToken cancellationToken);
     }
 }

@@ -2,6 +2,7 @@ using System.Text.Json;
 using FluentValidation;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Caching.Memory;
 using Moq;
 using MigrationApiBdd.DAL;
@@ -33,6 +34,7 @@ public class CommandeServiceTests : IDisposable
     private readonly Mock<IStockMouvementRepository> _stockRepo = new();
     private readonly Mock<IAuditLogRepository> _auditRepo = new();
     private readonly Mock<ICurrentUserService> _currentUser = new();
+    private readonly Mock<IDbContextTransaction> _transaction = new();
     private readonly MemoryCache _cache = new(new MemoryCacheOptions());
 
     private readonly List<AuditLog> _audits = [];
@@ -53,6 +55,15 @@ public class CommandeServiceTests : IDisposable
         _stockRepo
             .Setup(r => r.AddRange(It.IsAny<List<StockMouvement>>()))
             .Callback<List<StockMouvement>>(l => _mouvements.AddRange(l));
+
+        // Le repository réel applique le stock par un UPDATE atomique en base. Ici le service a déjà calculé
+        // le stock en mémoire : l'UPDATE réussit par défaut (le cas « stock pris entre-temps » a son propre test).
+        _produitRepo
+            .Setup(r => r.TryAppliquerVariationStockAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        _commandeRepo
+            .Setup(r => r.BeginTransactionAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(_transaction.Object);
     }
 
     public void Dispose() => _cache.Dispose();
@@ -728,6 +739,99 @@ public class CommandeServiceTests : IDisposable
         Assert.Equal(7, mouvement.StockApres);
         Assert.Equal(1, mouvement.Quantite); // magnitude positive, le sens est porté par TypeMouvement
         Assert.Equal(TypeMouvementStock.Sortie, mouvement.TypeMouvement);
+    }
+
+    [Fact]
+    public async Task Update_CasNominal_AppliqueLaVariationNetteParUnUpdateAtomique()
+    {
+        // 2 -> 3 unités : une seule variation nette de -1 (et non -3 puis +2).
+        CommandeExiste(CreerCommande(lignes: [(1, 2, 10m)]));
+        var produit = CreerProduit(1, stock: 8);
+        ProduitsExistent(produit);
+
+        await CreerService().UpdateCommandeAsync(100, CreerUpdateDto((1, 3)), CancellationToken.None);
+
+        _produitRepo.Verify(r => r.TryAppliquerVariationStockAsync(1, -1, It.IsAny<CancellationToken>()), Times.Once);
+        _produitRepo.Verify(r => r.RechargerAsync(produit, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Update_QuantiteInchangee_NAppliqueAucunUpdateDeStock()
+    {
+        CommandeExiste(CreerCommande(lignes: [(1, 2, 10m)]));
+        ProduitsExistent(CreerProduit(1, stock: 8));
+
+        await CreerService().UpdateCommandeAsync(100, CreerUpdateDto((1, 2)), CancellationToken.None);
+
+        _produitRepo.Verify(
+            r => r.TryAppliquerVariationStockAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task Update_PlusieursProduits_AppliqueLesVariationsParProduitIdCroissant()
+    {
+        // Ordre fixe = pas d'interblocage entre deux commandes qui se partagent les mêmes produits.
+        CommandeExiste(CreerCommande(lignes: [(5, 1, 10m), (3, 1, 10m)]));
+        ProduitsExistent(CreerProduit(5, stock: 10), CreerProduit(3, stock: 10));
+        var ordre = new List<int>();
+        _produitRepo
+            .Setup(r => r.TryAppliquerVariationStockAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Callback<int, int, CancellationToken>((produitId, variation, ct) => ordre.Add(produitId))
+            .ReturnsAsync(true);
+
+        await CreerService().UpdateCommandeAsync(100, CreerUpdateDto((5, 2), (3, 2)), CancellationToken.None);
+
+        Assert.Equal(new[] { 3, 5 }, ordre);
+    }
+
+    [Fact]
+    public async Task Update_StockPrisParUneAutreCommande_Leve409EtNeSauvegardePas()
+    {
+        // Le contrôle en mémoire passe, mais l'UPDATE conditionnel en base refuse : le stock vient d'être pris.
+        CommandeExiste(CreerCommande(lignes: [(1, 2, 10m)]));
+        ProduitsExistent(CreerProduit(1, stock: 8));
+        _produitRepo
+            .Setup(r => r.TryAppliquerVariationStockAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        _cache.Set("commande:100", "valeur en cache");
+
+        var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            CreerService().UpdateCommandeAsync(100, CreerUpdateDto((1, 3)), CancellationToken.None));
+
+        Assert.Equal(StatusCodes.Status409Conflict, ex.StatusCode);
+        Assert.Contains("Stock insuffisant", ex.Message);
+        _commandeRepo.Verify(r => r.SaveChangeAsync(It.IsAny<CancellationToken>()), Times.Never);
+        _transaction.Verify(t => t.CommitAsync(It.IsAny<CancellationToken>()), Times.Never);
+        Assert.True(_cache.TryGetValue("commande:100", out _));
+    }
+
+    [Fact]
+    public async Task Update_Reussie_ValideLaTransaction()
+    {
+        CommandeExiste(CreerCommande(lignes: [(1, 2, 10m)]));
+        ProduitsExistent(CreerProduit(1, stock: 8));
+
+        await CreerService().UpdateCommandeAsync(100, CreerUpdateDto((1, 3)), CancellationToken.None);
+
+        _transaction.Verify(t => t.CommitAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Update_ConflitSurLaCommande_NeValidePasLaTransaction()
+    {
+        // Si la commande est refusée (RowVersion périmée), la transaction n'est pas validée :
+        // le stock déjà modifié par les UPDATE atomiques est annulé avec elle.
+        CommandeExiste(CreerCommande(lignes: [(1, 2, 10m)]));
+        ProduitsExistent(CreerProduit(1, stock: 8));
+        _commandeRepo
+            .Setup(r => r.SaveChangeAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new DbUpdateConcurrencyException());
+
+        await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            CreerService().UpdateCommandeAsync(100, CreerUpdateDto((1, 3)), CancellationToken.None));
+
+        _transaction.Verify(t => t.CommitAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

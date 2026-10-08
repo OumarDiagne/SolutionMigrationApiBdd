@@ -1,5 +1,6 @@
 ﻿using Azure.Core;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using MigrationApiBdd.Dtos;
 using MigrationApiBdd.Models;
 using MigrationApiBdd.Models.Context;
@@ -46,6 +47,11 @@ namespace MigrationApiBdd.DAL
         public async Task SaveChangeAsync(CancellationToken cancellationToken)
         {
            await _migApiContext.SaveChangesAsync(cancellationToken);
+        }
+
+        public async Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken)
+        {
+            return await _migApiContext.Database.BeginTransactionAsync(cancellationToken);
         }
 
         public void SetOriginalRowVersion(Commandes commande, byte[] rowVersion)

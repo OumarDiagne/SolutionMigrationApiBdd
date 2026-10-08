@@ -71,5 +71,29 @@ namespace MigrationApiBdd.DAL
         {
             _migApiContext.Entry(produitTracke).Property(c => c.RowVersion).OriginalValue = rowVersion;
         }
+
+        /// <summary>
+        /// Applique une variation de stock par un UPDATE atomique (variation négative = sortie).
+        /// Le contrôle « stock suffisant » et la modification sont faits dans la même instruction SQL :
+        /// le stock ne peut jamais devenir négatif, même avec des commandes simultanées.
+        /// Renvoie false si le stock disponible est insuffisant (aucune ligne modifiée).
+        /// </summary>
+        public async Task<bool> TryAppliquerVariationStockAsync(int produitId, int variation, CancellationToken cancellationToken)
+        {
+            var lignesModifiees = await _migApiContext.Produits
+                .Where(p => p.ProduitId == produitId && p.Stock + variation >= 0)
+                .ExecuteUpdateAsync(s => s.SetProperty(p => p.Stock, p => p.Stock + variation), cancellationToken);
+
+            return lignesModifiees == 1;
+        }
+
+        /// <summary>
+        /// Relit le produit en base (stock et RowVersion) après un UPDATE atomique,
+        /// car ExecuteUpdateAsync ne met pas à jour les entités suivies en mémoire.
+        /// </summary>
+        public async Task RechargerAsync(Produits produit, CancellationToken cancellationToken)
+        {
+            await _migApiContext.Entry(produit).ReloadAsync(cancellationToken);
+        }
     }
 }

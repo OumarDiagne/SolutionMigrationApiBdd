@@ -275,6 +275,36 @@ namespace MigrationApiBdd.Services.Classes
             produit.Stock -= quantite;
         }
 
+        /// <summary>
+        /// Applique en base les variations nettes de stock (négative = sortie) par des UPDATE atomiques.
+        /// Le calcul en mémoire (restitution, validation, réservation) sert aux messages d'erreur et aux journaux ;
+        /// c'est l'UPDATE conditionnel qui arbitre réellement le stock quand plusieurs commandes arrivent en même temps.
+        /// Les produits sont traités par ProduitId croissant pour éviter les interblocages entre transactions.
+        /// À appeler dans une transaction : si la commande est refusée ensuite, le stock est annulé avec elle.
+        /// </summary>
+        private async Task AppliquerVariationsStockAsync(
+            Dictionary<int, Produits> produitsParId,
+            IReadOnlyDictionary<int, int> variations,
+            CancellationToken cancellationToken)
+        {
+            foreach (var (produitId, variation) in variations.Where(v => v.Value != 0).OrderBy(v => v.Key))
+            {
+                var produit = produitsParId[produitId];
+
+                bool applique = await _produitRepository.TryAppliquerVariationStockAsync(produitId, variation, cancellationToken);
+                if (!applique)
+                {
+                    throw new BusinessRuleException(
+                        $"Stock insuffisant pour le produit : {produit.NomProduit}. " +
+                        "Le stock vient d'être réservé par une autre commande.",
+                        StatusCodes.Status409Conflict);
+                }
+
+                // Remet le stock réel (et la RowVersion) dans l'entité suivie, pour des journaux exacts.
+                await _produitRepository.RechargerAsync(produit, cancellationToken);
+            }
+        }
+
         private static string ConstruireValeurAuditCommande(Commandes commande)
         {
             var valeurAudit = new
@@ -518,6 +548,12 @@ namespace MigrationApiBdd.Services.Classes
                 Dictionary<int, Produits> produitsParId = await GetProduitsParIdsAsync(correlationId, produitIds, operation, cancellationToken);
 
                 var resultatPreparation = CommandeService.PreparerCommande(produitsParId, produitsIdsDico);
+                // Réservation atomique du stock en base (dans la transaction de création).
+                await AppliquerVariationsStockAsync(
+                    produitsParId,
+                    produitsIdsDico.ToDictionary(l => l.Key, l => -l.Value),
+                    cancellationToken);
+
                 ICollection<LignesCommande> lignesCommande = resultatPreparation.LignesCommande.ToList();
 
                 Commandes commande = new Commandes
@@ -639,6 +675,19 @@ namespace MigrationApiBdd.Services.Classes
                 .ToDictionary(g => g.Key, g => g.Sum(l => l.Quantite));
             var resultatPreparation = CommandeService.PreparerCommande(produitsParId, produitsIdsDico);
 
+            // Les variations de stock sont appliquées en base par des UPDATE atomiques, dans une transaction :
+            // si la commande est refusée ensuite (409 sur sa RowVersion), le stock est annulé avec elle.
+            await using var transaction = await _commandeRepository.BeginTransactionAsync(cancellationToken);
+
+            var variationsStock = produitsParId.ToDictionary(p => p.Key, p => p.Value.Stock - stocksAvant[p.Key]);
+            await AppliquerVariationsStockAsync(produitsParId, variationsStock, cancellationToken);
+
+            // Stock réel avant l'opération = stock réel après - variation (exact même en cas de concurrence).
+            foreach (var (produitId, variation) in variationsStock.Where(v => v.Value != 0))
+            {
+                stocksAvant[produitId] = produitsParId[produitId].Stock - variation;
+            }
+
             commande.TotalCommandeTTC = resultatPreparation.TotalCommandeTTC;
 
             foreach (var ligneFinalisee in resultatPreparation.LignesCommande)
@@ -659,6 +708,8 @@ namespace MigrationApiBdd.Services.Classes
                 throw new BusinessRuleException(
                     "La commande a été modifié par un autre utilisateur. Rechargez les données avant de réessayer.", StatusCodes.Status409Conflict);
             }
+
+            await transaction.CommitAsync(cancellationToken);
 
             _cache.Remove($"commande:{commande.CommandeId}");
             ProduitCacheKeys.Invalider(_cache, produitIds);
