@@ -74,23 +74,23 @@ Le compte administrateur est créé **une seule fois** : si l'e-mail existe déj
 
 ### Lancer avec Docker (environnement local)
 
-Prérequis : Docker Desktop. Le `docker-compose.yml` démarre l'API et SQL Server ; les secrets sont lus dans un fichier `.env` (ignoré par git).
+Prérequis : Docker Desktop. Le `docker-compose.yml` démarre trois éléments : **nginx** (reverse proxy HTTPS), l'**API** et **SQL Server**. Les secrets sont lus dans un fichier `.env` (ignoré par git).
 
 ```bash
 cp .env.example .env     # puis renseigner les valeurs
 docker compose up --build
 ```
 
+L'API est alors disponible sur `https://localhost:9443`. nginx termine le HTTPS avec un certificat **auto-signé** (généré au premier lancement) puis transmet les requêtes en HTTP à l'API sur le réseau interne Docker ; l'API n'est pas exposée directement. Il faut donc accepter l'avertissement du navigateur, ou désactiver la vérification du certificat dans le client de test.
+
 | Variable du `.env` | Rôle |
 |---|---|
 | `SQL_PASSWORD` | Mot de passe du compte `sa` de SQL Server (8 caractères minimum, majuscule, minuscule, chiffre, symbole) |
 | `JWT_SIGNING_KEY` | Clé de signature des JWT (32 caractères minimum) |
 | `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD` | Compte administrateur créé au démarrage |
-| `API_PORT` | Port de l'API sur la machine hôte (8080 par défaut ; à changer s'il est déjà pris) |
+| `HTTPS_PORT` | Port HTTPS sur la machine hôte (9443 par défaut) |
 
-Le conteneur de l'API écoute en **HTTP sur le port 8080**. Le fichier Compose active deux interrupteurs réservés au local : `ApplyMigrationsOnStartup=true` (création du schéma au démarrage, car une base neuve est vide) et `SeedDemoData=true`. Sur un serveur de test ou de production, ils restent absents ou à `false`.
-
-Limites de ce mode : pas de HTTPS dans le conteneur (la redirection HTTPS ne se déclenche donc pas, un avertissement apparaît dans les logs) et le cookie `Secure` du refresh token n'est pas fiable en HTTP. En déploiement, le HTTPS est assuré par un reverse proxy placé devant l'API.
+Le fichier Compose active des réglages réservés au local : `ApplyMigrationsOnStartup=true` (création du schéma au démarrage, car une base neuve est vide) et `SeedDemoData=true`. Sur un serveur de test ou de production, ils restent absents ou à `false`. nginx transmet le schéma d'origine dans `X-Forwarded-Proto` ; l'API le prend en compte grâce à `ASPNETCORE_FORWARDEDHEADERS_ENABLED=true`, ce qui rend le cookie `Secure` du refresh token utilisable et évite toute redirection HTTPS inutile.
 
 ## Tests
 
