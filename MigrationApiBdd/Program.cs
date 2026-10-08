@@ -141,6 +141,14 @@ var app = builder.Build();
 // Seed the database with initial data if it is empty
 using var scope = app.Services.CreateScope();
 var services = scope.ServiceProvider;
+
+// Application automatique des migrations : uniquement si ApplyMigrationsOnStartup=true
+// (conteneur local). Absente ou false => le schéma est géré hors de l'application (test, prod).
+if (builder.Configuration.GetValue<bool>("ApplyMigrationsOnStartup"))
+{
+    await services.GetRequiredService<MigApiContext>().Database.MigrateAsync();
+}
+
 await IdentitySeedData.SeedRolesAsync(services);
 await IdentitySeedData.SeedAdminAsync(services, builder.Configuration);
 

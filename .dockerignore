@@ -1,0 +1,12 @@
+**/bin/
+**/obj/
+**/.vs/
+.git/
+.github/
+_backup-*/
+*.md
+.env
+**/*.user
+**/TestResults/
+resultats/
+MigrationApiBdd.Tests/

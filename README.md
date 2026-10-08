@@ -72,6 +72,26 @@ En développement, la description OpenAPI est exposée par l'API.
 
 Le compte administrateur est créé **une seule fois** : si l'e-mail existe déjà, le mot de passe n'est pas relu, donc modifier `SeedAdmin:Password` plus tard ne change pas le mot de passe en base. L'application refuse de démarrer si l'e-mail ou le mot de passe est absent. Aucun de ces secrets ne doit figurer dans `appsettings.json` ni dans le dépôt.
 
+### Lancer avec Docker (environnement local)
+
+Prérequis : Docker Desktop. Le `docker-compose.yml` démarre l'API et SQL Server ; les secrets sont lus dans un fichier `.env` (ignoré par git).
+
+```bash
+cp .env.example .env     # puis renseigner les valeurs
+docker compose up --build
+```
+
+| Variable du `.env` | Rôle |
+|---|---|
+| `SQL_PASSWORD` | Mot de passe du compte `sa` de SQL Server (8 caractères minimum, majuscule, minuscule, chiffre, symbole) |
+| `JWT_SIGNING_KEY` | Clé de signature des JWT (32 caractères minimum) |
+| `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD` | Compte administrateur créé au démarrage |
+| `API_PORT` | Port de l'API sur la machine hôte (8080 par défaut ; à changer s'il est déjà pris) |
+
+Le conteneur de l'API écoute en **HTTP sur le port 8080**. Le fichier Compose active deux interrupteurs réservés au local : `ApplyMigrationsOnStartup=true` (création du schéma au démarrage, car une base neuve est vide) et `SeedDemoData=true`. Sur un serveur de test ou de production, ils restent absents ou à `false`.
+
+Limites de ce mode : pas de HTTPS dans le conteneur (la redirection HTTPS ne se déclenche donc pas, un avertissement apparaît dans les logs) et le cookie `Secure` du refresh token n'est pas fiable en HTTP. En déploiement, le HTTPS est assuré par un reverse proxy placé devant l'API.
+
 ## Tests
 
 La solution contient **plus de 200 tests** (xUnit, Moq) :
