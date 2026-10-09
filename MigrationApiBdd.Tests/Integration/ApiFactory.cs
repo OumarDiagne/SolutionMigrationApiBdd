@@ -43,6 +43,8 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         Environment.SetEnvironmentVariable("Jwt__SigningKey", "cle-de-signature-uniquement-pour-les-tests-1234567890");
         Environment.SetEnvironmentVariable("SeedAdmin__Email", AdminEmail);
         Environment.SetEnvironmentVariable("SeedAdmin__Password", AdminPassword);
+        // Les tests créent des dizaines de comptes depuis la même « adresse » : on neutralise le limiteur de débit des routes publiques.
+        Environment.SetEnvironmentVariable("RateLimiting__Auth__PermitLimit", "100000");
     }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)

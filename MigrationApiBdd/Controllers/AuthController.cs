@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using MigrationApiBdd.Dtos.Auth;
 using MigrationApiBdd.Services.Auth;
 
@@ -22,6 +23,7 @@ namespace MigrationApiBdd.Controllers
 
         [HttpPost("register")]
         [AllowAnonymous]
+        [EnableRateLimiting("auth")]
         public async Task<IActionResult> Register([FromBody] RegisterDto registerDto)
         {
             // Implementation for user registration
@@ -48,6 +50,7 @@ namespace MigrationApiBdd.Controllers
 
         [HttpPost("login")]
         [AllowAnonymous]
+        [EnableRateLimiting("auth")]
         public async Task<ActionResult<LoginResponseDto>> Login([FromBody] LoginDto loginDto)
         {
             var result = await _authService.LoginAsync(loginDto);
