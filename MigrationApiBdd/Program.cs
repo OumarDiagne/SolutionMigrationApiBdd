@@ -16,6 +16,9 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using Scalar.AspNetCore;
+using Microsoft.AspNetCore.RateLimiting;
+using System.Threading.RateLimiting;
+using MigrationApiBdd.Helpers;
 
 
 var builder = WebApplication.CreateBuilder(args);
@@ -116,8 +119,35 @@ builder.Services
                 Encoding.UTF8.GetBytes(jwtOptions.SigningKey))
         };
     });
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddOpenApi();
+// Description OpenAPI (Scalar). Le transformateur déclare le schéma Bearer : Scalar propose alors
+// un champ pour coller le jeton d'accès une fois pour toutes (voir BearerSecuritySchemeTransformer).
+builder.Services.AddOpenApi(options =>
+{
+    options.AddDocumentTransformer<BearerSecuritySchemeTransformer>();
+});
+
+// Limiteur de débit sur l'inscription et la connexion (routes publiques sur Internet) :
+// fenêtre fixe par adresse IP. Réglable sans recompiler :
+//   RateLimiting:Auth:PermitLimit   (variable RateLimiting__Auth__PermitLimit, défaut 20)
+//   RateLimiting:Auth:WindowSeconds (variable RateLimiting__Auth__WindowSeconds, défaut 60)
+// L'adresse IP est celle du visiteur grâce à ASPNETCORE_FORWARDEDHEADERS_ENABLED (derrière le proxy).
+var authPermitLimit = builder.Configuration.GetValue<int?>("RateLimiting:Auth:PermitLimit") ?? 20;
+var authWindowSeconds = builder.Configuration.GetValue<int?>("RateLimiting:Auth:WindowSeconds") ?? 60;
+
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    options.AddPolicy("auth", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = authPermitLimit,
+                Window = TimeSpan.FromSeconds(authWindowSeconds),
+                QueueLimit = 0
+            }));
+});
 
 
 var frontendOrigin = builder.Configuration["Cors:FrontendOrigin"]
@@ -175,6 +205,9 @@ app.UseExceptionHandler();
 app.UseHttpsRedirection();
 
 app.UseCors("Frontend");
+
+// Après le routage (implicite) : les politiques par route ([EnableRateLimiting]) lisent les métadonnées de l'endpoint.
+app.UseRateLimiter();
 
 app.UseAuthentication();
 

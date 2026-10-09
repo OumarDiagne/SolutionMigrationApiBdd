@@ -5,6 +5,23 @@
 API REST en **ASP.NET Core (.NET 10)** avec **EF Core** et **SQL Server** : clients, produits, commandes, gestion du stock, journalisation et authentification JWT.
 Projet personnel conçu pour être maîtrisé de bout en bout : API, base de données, tests, intégration continue, puis déploiement (voir la feuille de route).
 
+## Démo en ligne
+
+La documentation interactive (Scalar) permet d'essayer l'API déployée sur Azure : **https://ca-migapi.salmonriver-8486a327.francecentral.azurecontainerapps.io/scalar/v1**
+
+> L'application est à zéro réplique quand personne ne l'utilise, et la base Azure SQL se met en pause : le premier chargement peut prendre environ une minute.
+
+Parcours conseillé (aucune installation) :
+
+1. `POST /api/Auth/register` : créer un compte (e-mail, mot de passe d'au moins 8 caractères, confirmation, nom, prénom). La réponse donne le `clientId` du client métier créé avec le compte.
+2. `POST /api/Auth/login` : copier l'`accessToken` de la réponse (valable 15 minutes).
+3. Dans Scalar, coller le jeton dans le champ d'authentification **Bearer** : il est ensuite envoyé avec toutes les requêtes protégées.
+4. `GET /api/Produit` : lire le catalogue (20 produits de démonstration).
+5. `POST /api/Commande` avec l'en-tête `Idempotency-Key` (une chaîne unique de votre choix) et un corps `{"clientId": <votre clientId>, "lignesCommande": [{"produitId": <un identifiant du catalogue>, "quantite": 2}]}`.
+6. `GET /api/Commande`, puis `GET /api/Produit/<identifiant>` : la commande est enregistrée et le stock du produit commandé a baissé.
+
+Un compte `User` ne voit que ses propres commandes et son propre client ; la création de produits, le réapprovisionnement et la liste des clients sont réservés à `Admin`. Les routes d'inscription et de connexion sont limitées à 20 requêtes par minute et par adresse IP (réponse **429** au-delà).
+
 ## Ce que fait l'API
 
 | Domaine | Fonctionnalités |
@@ -69,6 +86,8 @@ En développement, la description OpenAPI est exposée par l'API.
 | `Jwt:SigningKey` (`Jwt__SigningKey`) | Clé de signature des JWT | user-secrets | variable d'environnement ou coffre de secrets |
 | `SeedAdmin:Email`, `SeedAdmin:Password` (`SeedAdmin__Email`, `SeedAdmin__Password`) | Compte administrateur créé au démarrage | user-secrets | variables d'environnement |
 | `SeedDemoData` | Charge des clients de démonstration | `true` (défini dans `launchSettings.json`) | non définie ou `false` |
+| `OpenApi:Enabled` (`OpenApi__Enabled`) | Expose la description OpenAPI et Scalar hors développement | inutile (toujours exposée) | `true` pour la démo |
+| `RateLimiting:Auth:PermitLimit`, `RateLimiting:Auth:WindowSeconds` (`RateLimiting__Auth__...`) | Limite d'appels par IP sur l'inscription et la connexion | 20 par 60 s (défaut) | 20 par 60 s (défaut) |
 
 Le compte administrateur est créé **une seule fois** : si l'e-mail existe déjà, le mot de passe n'est pas relu, donc modifier `SeedAdmin:Password` plus tard ne change pas le mot de passe en base. L'application refuse de démarrer si l'e-mail ou le mot de passe est absent. Aucun de ces secrets ne doit figurer dans `appsettings.json` ni dans le dépôt.
 
@@ -92,6 +111,26 @@ L'API est alors disponible sur `https://localhost:9443`. nginx termine le HTTPS 
 
 Le fichier Compose active des réglages réservés au local : `ApplyMigrationsOnStartup=true` (création du schéma au démarrage, car une base neuve est vide) et `SeedDemoData=true`. Sur un serveur de test ou de production, ils restent absents ou à `false`. nginx transmet le schéma d'origine dans `X-Forwarded-Proto` ; l'API le prend en compte grâce à `ASPNETCORE_FORWARDEDHEADERS_ENABLED=true`, ce qui rend le cookie `Secure` du refresh token utilisable et évite toute redirection HTTPS inutile.
 
+### Déploiement sur Azure
+
+L'API tourne sur **Azure Container Apps** (environnement à la consommation, de 0 à 1 réplique) avec **Azure SQL** (offre gratuite serverless, pause automatique).
+
+- **Secrets** : la clé JWT, le mot de passe de l'administrateur et la chaîne de connexion sont dans **Azure Key Vault** ; l'application les lit avec son **identité managée** (lecture seule).
+- **Base de données** : l'application se connecte à Azure SQL **sans mot de passe**, avec son identité managée (`Authentication=Active Directory Managed Identity`) ; le serveur n'accepte que l'authentification Microsoft Entra.
+- **Livraison continue** : un push sur `main` lance les tests, publie l'image Docker sur GitHub Container Registry (tag `sha-<commit>`) puis déploie cette image sur Azure. GitHub s'authentifie auprès d'Azure par identité fédérée (OIDC), sans secret stocké.
+- **Coûts** : zéro réplique au repos, une réplique maximale, alertes de budget mensuel.
+
+Compromis assumé : la règle de pare-feu SQL « services Azure » reste ouverte, car les adresses de sortie d'une Container App en mode consommation ne sont pas fixes ; l'accès exige de toute façon un jeton Microsoft Entra valide pour l'identité de l'application.
+
+### Données de démonstration (catalogue)
+
+`scripts/seed-demo-produits.sh` crée 20 produits via l'API avec le compte administrateur (le mot de passe est lu dans Key Vault). Le passage par l'API, et non par un `INSERT` SQL, conserve la traçabilité : mouvement de stock « stock initial » et journal d'audit sont écrits comme pour une vraie création. Le script est rejouable : un produit déjà présent est ignoré.
+
+```bash
+export ADMIN_EMAIL="<e-mail du compte administrateur>"
+bash scripts/seed-demo-produits.sh
+```
+
 ## Tests
 
 La solution contient **plus de 200 tests** (xUnit, Moq) :
@@ -111,13 +150,19 @@ Six scénarios (authentification, produits, commandes et stock, isolation entre 
 
 ## Intégration continue
 
-Le workflow GitHub Actions (`.github/workflows/ci.yml`) compile la solution et lance tous les tests à chaque push et à chaque pull request, avec un conteneur SQL Server pour les tests d'intégration.
+Le workflow GitHub Actions (`.github/workflows/ci.yml`) enchaîne trois jobs :
+
+1. **tests** : compile la solution et lance tous les tests, avec un conteneur SQL Server pour les tests d'intégration (à chaque push et à chaque pull request) ;
+2. **docker** : construit l'image Docker ; sur `main`, la publie sur GitHub Container Registry (`sha-<commit>` et `latest`) ;
+3. **deploy** : sur `main` uniquement, met à jour l'application Azure Container Apps avec l'image du commit, puis vérifie qu'elle répond.
 
 ## Limites connues et feuille de route
 
 - Une mise à jour (`PUT`) avec une `RowVersion` périmée mais un contenu identique à l'état courant renvoie 200 : rien n'est écrit, donc aucun conflit n'est détecté.
 - Cache en mémoire du processus : un cache distribué (Redis) sera nécessaire avec plusieurs instances.
-- Étapes prévues : déploiement sur un serveur de test, puis conteneurisation (Docker) et migration vers Azure (Azure SQL, Key Vault, Managed Identity, Application Insights), puis Kubernetes (AKS).
+- Les migrations s'exécutent au démarrage de l'API (`ApplyMigrationsOnStartup`) : l'identité de l'application a donc le droit de modifier le schéma. Les sortir dans une étape dédiée du pipeline permettrait de réduire ses droits à la lecture et à l'écriture.
+- Réalisé : serveur de test (Windows Server 2022, IIS), conteneurisation (Docker, nginx), Azure Container Apps, Azure SQL, Key Vault, identité managée, déploiement continu, limitation de débit.
+- À venir : clés Data Protection persistantes, Application Insights, rôle Azure personnalisé pour le pipeline, puis Kubernetes (AKS).
 
 ## Auteur
 
