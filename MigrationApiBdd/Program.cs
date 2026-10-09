@@ -15,6 +15,7 @@ using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using Scalar.AspNetCore;
 
 
 var builder = WebApplication.CreateBuilder(args);
@@ -160,10 +161,14 @@ if (builder.Configuration.GetValue<bool>("SeedDemoData") && !await context.Clien
     await SeedData.SeedAsync(services);
 }
 
-// Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
+// Documentation de l'API : toujours en développement, en production seulement si OpenApi:Enabled=true.
+var openApiEnabled = app.Environment.IsDevelopment()
+    || app.Configuration.GetValue<bool>("OpenApi:Enabled");
+
+if (openApiEnabled)
 {
-    app.MapOpenApi();
+    app.MapOpenApi();            // /openapi/v1.json
+    app.MapScalarApiReference(); // /scalar/v1
 }
 app.UseExceptionHandler();
 
