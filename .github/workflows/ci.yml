@@ -122,3 +122,40 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+  deploy:
+    name: Déploiement sur Azure Container Apps (depuis main)
+    needs: docker
+    # Uniquement sur un push sur main, jamais sur une pull request.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    # Un seul déploiement à la fois, sans annuler celui en cours.
+    concurrency:
+      group: deploy-azure
+      cancel-in-progress: false
+
+    permissions:
+      id-token: write   # autorise GitHub à émettre le jeton OIDC présenté à Azure
+      contents: read
+
+    steps:
+      - name: Connexion à Azure (identité fédérée, sans mot de passe)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Même tag que celui publié par le job « docker » : sha- + 7 premiers caractères du commit.
+      - name: Mise à jour de ca-migapi avec l'image du commit
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}:sha-${GITHUB_SHA::7}"
+          echo "Déploiement de $IMAGE"
+          az containerapp update -g rg-migapi -n ca-migapi --image "$IMAGE"
+
+      # Contrôle : la nouvelle révision doit répondre (réessaie jusqu'à 3 minutes).
+      - name: Vérification que l'application répond
+        run: |
+          FQDN=$(az containerapp show -g rg-migapi -n ca-migapi --query properties.configuration.ingress.fqdn -o tsv)
+          curl -fsS --retry 12 --retry-delay 15 --retry-all-errors "https://$FQDN/openapi/v1.json" -o /dev/null
+          echo "Application disponible sur https://$FQDN"
