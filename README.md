@@ -9,7 +9,7 @@ Projet personnel conçu pour être maîtrisé de bout en bout : API, base de don
 
 La documentation interactive (Scalar) permet d'essayer l'API déployée sur Azure : **https://ca-migapi.salmonriver-8486a327.francecentral.azurecontainerapps.io/scalar/v1**
 
-> L'application est à zéro réplique quand personne ne l'utilise, et la base Azure SQL se met en pause : le premier chargement peut prendre environ une minute.
+> L'architecture utilise un hébergement Serverless (Scale-to-Zero) et une base de données Azure SQL Serverless. Si l'application n'a pas été sollicitée récemment, elle se met en veille automatiquement. Le premier chargement (démarrage à froid / cold start) peut donc nécessiter environ une minute, le temps que les ressources se réactivent.
 
 Parcours conseillé (aucune installation) :
 
