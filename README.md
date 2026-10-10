@@ -1,169 +1,173 @@
-# MigAgiBdd : API de gestion de commandes et de stock
+🇬🇧 English · 🇫🇷 [Français](README.fr.md) · 🇮🇹 [Italiano](README.it.md)
+
+# MigAgiBdd: Order and Stock Management API
 
 ![CI](https://github.com/OumarDiagne/SolutionMigrationApiBdd/actions/workflows/ci.yml/badge.svg)
 
-API REST en **ASP.NET Core (.NET 10)** avec **EF Core** et **SQL Server** : clients, produits, commandes, gestion du stock, journalisation et authentification JWT.
-Projet personnel conçu pour être maîtrisé de bout en bout : API, base de données, tests, intégration continue, puis déploiement (voir la feuille de route).
+REST API built with **ASP.NET Core (.NET 10)**, **EF Core** and **SQL Server**: customers, products, orders, stock management, audit logging and JWT authentication.
+A personal project designed to be mastered end to end: API, database, tests, continuous integration, then deployment (see the roadmap).
 
-## Démo en ligne
+## Live demo
 
-La documentation interactive (Scalar) permet d'essayer l'API déployée sur Azure : **https://ca-migapi.salmonriver-8486a327.francecentral.azurecontainerapps.io/scalar/v1**
+The interactive documentation (Scalar) lets you try the API deployed on Azure: **https://ca-migapi.salmonriver-8486a327.francecentral.azurecontainerapps.io/scalar/v1**
 
-> L'architecture utilise un hébergement Serverless (Scale-to-Zero) et une base de données Azure SQL Serverless. Si l'application n'a pas été sollicitée récemment, elle se met en veille automatiquement. Le premier chargement (démarrage à froid / cold start) peut donc nécessiter environ une minute, le temps que les ressources se réactivent.
+> The architecture uses serverless hosting (scale to zero) and an Azure SQL Serverless database. If the application has not been used recently, it goes to sleep automatically. The first load (cold start) may therefore take about a minute while the resources wake up.
 
-Parcours conseillé (aucune installation) :
+Suggested walkthrough (nothing to install):
 
-1. `POST /api/Auth/register` : créer un compte (e-mail, mot de passe d'au moins 8 caractères, confirmation, nom, prénom). La réponse donne le `clientId` du client métier créé avec le compte.
-2. `POST /api/Auth/login` : copier l'`accessToken` de la réponse (valable 15 minutes).
-3. Dans Scalar, coller le jeton dans le champ d'authentification **Bearer** : il est ensuite envoyé avec toutes les requêtes protégées.
-4. `GET /api/Produit` : lire le catalogue (20 produits de démonstration).
-5. `POST /api/Commande` avec l'en-tête `Idempotency-Key` (une chaîne unique de votre choix) et un corps `{"clientId": <votre clientId>, "lignesCommande": [{"produitId": <un identifiant du catalogue>, "quantite": 2}]}`.
-6. `GET /api/Commande`, puis `GET /api/Produit/<identifiant>` : la commande est enregistrée et le stock du produit commandé a baissé.
+1. `POST /api/Auth/register`: create an account (email, password of at least 8 characters, confirmation, last name, first name). The response contains the `clientId` of the business customer created with the account.
+2. `POST /api/Auth/login`: copy the `accessToken` from the response (valid for 15 minutes).
+3. In Scalar, paste the token into the **Bearer** authentication field: it is then sent with every protected request.
+4. `GET /api/Produit`: read the catalogue (20 demo products).
+5. `POST /api/Commande` with an `Idempotency-Key` header (any unique string) and a body such as `{"clientId": <your clientId>, "lignesCommande": [{"produitId": <a catalogue id>, "quantite": 2}]}`.
+6. `GET /api/Commande`, then `GET /api/Produit/<id>`: the order is saved and the stock of the ordered product has decreased.
 
-Un compte `User` ne voit que ses propres commandes et son propre client ; la création de produits, le réapprovisionnement et la liste des clients sont réservés à `Admin`. Les routes d'inscription et de connexion sont limitées à 20 requêtes par minute et par adresse IP (réponse **429** au-delà).
+A `User` account only sees its own orders and its own customer record; creating products, restocking and listing customers are reserved for `Admin`. The registration and login routes are limited to 20 requests per minute per IP address (**429** response beyond that).
 
-## Ce que fait l'API
+> The field names and error messages of the API are in French (for example `nomProduit`, `quantite`).
 
-| Domaine | Fonctionnalités |
+## What the API does
+
+| Domain | Features |
 |---|---|
-| **Authentification** | Inscription (compte + client métier créés ensemble), connexion, JWT d'accès de courte durée, refresh token avec rotation, déconnexion |
-| **Produits** | Catalogue, création, modification, archivage ; cache mémoire invalidé à chaque changement |
-| **Commandes** | Création, modification, archivage ; calcul du total, contrôle de disponibilité et décrément du stock |
-| **Clients** | Lecture, modification, désactivation ; un utilisateur ne gère que son propre client |
-| **Stock** | Réapprovisionnement, mouvements de stock tracés (entrée / sortie) |
-| **Traçabilité** | Journal d'audit (ancienne et nouvelle valeur), mouvements de stock, journal d'opérations, identifiant de corrélation |
+| **Authentication** | Registration (account and business customer created together), login, short-lived access JWT, refresh token with rotation, logout |
+| **Products** | Catalogue, creation, update, archiving; in-memory cache invalidated on every change |
+| **Orders** | Creation, update, archiving; total calculation, availability check and stock decrement |
+| **Customers** | Read, update, deactivate; a user only manages their own customer record |
+| **Stock** | Restocking, traced stock movements (in / out) |
+| **Traceability** | Audit log (old and new value), stock movements, operation log, correlation identifier |
 
-## Choix techniques
+## Technical choices
 
-- **Architecture en couches** : Contrôleurs → Services (règles métier) → Repositories (accès aux données) → EF Core / SQL Server.
-- **Concurrence optimiste** : colonne `RowVersion` sur les clients, produits et commandes. Le client renvoie la version lue (corps de requête ou en-tête `If-Match`) ; une version périmée donne une **409**, une version absente une **428**, une version invalide une **400**.
-- **Idempotence** : l'en-tête `Idempotency-Key` est obligatoire à la création d'un produit ou d'une commande. Le même appel rejoué renvoie la même réponse sans doublon ni double décrément du stock ; la même clé avec un contenu différent donne une **422**. La création s'exécute dans une transaction.
-- **Sécurité** :
-  - JWT d'accès de 15 minutes, refresh token en cookie `HttpOnly`, `Secure`, `SameSite=Strict`, stocké **haché** (SHA-256) en base.
-  - Rotation du refresh token à chaque utilisation ; la réutilisation d'un ancien token révoque tous les tokens de l'utilisateur.
-  - Contrôle d'accès par rôle (`Admin`, `User`) et par propriétaire : la ressource d'un autre utilisateur répond **404**, comme si elle n'existait pas (pas de fuite d'existence).
-- **Erreurs homogènes** : gestionnaire global qui renvoie des `ProblemDetails` (RFC 7807).
-- **Modèle de données** : un client métier peut exister sans compte (relation 0..1 avec l'utilisateur Identity, clé étrangère nullable avec index unique filtré). Un compte `User` possède toujours un client, créé à l'inscription ; un compte `Admin` n'en a pas.
-- **Bibliothèques** : FluentValidation, Mapster, ASP.NET Core Identity, JwtBearer.
+- **Layered architecture**: Controllers → Services (business rules) → Repositories (data access) → EF Core / SQL Server.
+- **Optimistic concurrency**: `RowVersion` column on customers, products and orders. The client sends back the version it read (request body or `If-Match` header); a stale version returns **409**, a missing version **428**, an invalid version **400**.
+- **Idempotency**: the `Idempotency-Key` header is mandatory when creating a product or an order. Replaying the same call returns the same response with no duplicate and no second stock decrement; the same key with different content returns **422**. Creation runs in a transaction.
+- **Security**:
+  - 15-minute access JWT, refresh token in an `HttpOnly`, `Secure`, `SameSite=Strict` cookie, stored **hashed** (SHA-256) in the database.
+  - The refresh token is rotated on every use; reusing an old token revokes all of the user's tokens.
+  - Access control by role (`Admin`, `User`) and by owner: another user's resource answers **404**, as if it did not exist (no existence leak).
+- **Consistent errors**: a global handler returns `ProblemDetails` (RFC 7807).
+- **Data model**: a business customer can exist without an account (0..1 relationship with the Identity user, nullable foreign key with a filtered unique index). A `User` account always has a customer, created at registration; an `Admin` account has none.
+- **Libraries**: FluentValidation, Mapster, ASP.NET Core Identity, JwtBearer.
 
-## Droits d'accès
+## Access rights
 
-| Ressource | Anonyme | `User` | `Admin` |
+| Resource | Anonymous | `User` | `Admin` |
 |---|---|---|---|
-| Inscription, connexion, refresh, déconnexion | oui | oui | oui |
-| Produits : lecture | non | oui | oui |
-| Produits : création, modification, archivage | non | non | oui |
-| Stock : réapprovisionnement | non | non | oui |
-| Commandes | non | les siennes (pour son client) | toutes, pour n'importe quel client |
-| Clients : liste, création | non | non | oui |
-| Clients : lecture, modification, désactivation | non | le sien (`/api/client/me`) | tous |
+| Registration, login, refresh, logout | yes | yes | yes |
+| Products: read | no | yes | yes |
+| Products: create, update, archive | no | no | yes |
+| Stock: restocking | no | no | yes |
+| Orders | no | their own (for their customer) | all, for any customer |
+| Customers: list, create | no | no | yes |
+| Customers: read, update, deactivate | no | their own (`/api/client/me`) | all |
 
-## Lancer le projet
+## Running the project
 
-Prérequis : SDK .NET 10 et SQL Server (LocalDB suffit sous Windows).
+Prerequisites: .NET 10 SDK and SQL Server (LocalDB is enough on Windows).
 
 ```bash
 cd MigrationApiBdd
 
-# Secrets de développement (jamais dans le dépôt)
-dotnet user-secrets set "Jwt:SigningKey" "<une clé d'au moins 32 caractères>"
+# Development secrets (never in the repository)
+dotnet user-secrets set "Jwt:SigningKey" "<a key of at least 32 characters>"
 dotnet user-secrets set "SeedAdmin:Email" "admin@example.com"
-dotnet user-secrets set "SeedAdmin:Password" "<mot de passe respectant la politique Identity>"
+dotnet user-secrets set "SeedAdmin:Password" "<a password that meets the Identity policy>"
 
-# Création de la base (chaîne de connexion dans appsettings.json, LocalDB par défaut)
+# Create the database (connection string in appsettings.json, LocalDB by default)
 dotnet ef database update
 
 dotnet run
 ```
 
-Au démarrage, l'API crée les rôles `Admin` et `User` ainsi que le compte administrateur. Le jeu de données de démonstration (clients) n'est chargé que si `SeedDemoData` vaut `true` **et** que la base ne contient aucun client.
-En développement, la description OpenAPI est exposée par l'API.
+At startup, the API creates the `Admin` and `User` roles and the administrator account. The demo data set (customers) is only loaded if `SeedDemoData` is `true` **and** the database contains no customer.
+In development, the OpenAPI description is exposed by the API.
 
-### Configuration par environnement
+### Configuration per environment
 
-| Clé (variable d'environnement) | Rôle | Local | Serveur de test / production |
+| Key (environment variable) | Purpose | Local | Test server / production |
 |---|---|---|---|
-| `Jwt:SigningKey` (`Jwt__SigningKey`) | Clé de signature des JWT | user-secrets | variable d'environnement ou coffre de secrets |
-| `SeedAdmin:Email`, `SeedAdmin:Password` (`SeedAdmin__Email`, `SeedAdmin__Password`) | Compte administrateur créé au démarrage | user-secrets | variables d'environnement |
-| `SeedDemoData` | Charge des clients de démonstration | `true` (défini dans `launchSettings.json`) | non définie ou `false` |
-| `OpenApi:Enabled` (`OpenApi__Enabled`) | Expose la description OpenAPI et Scalar hors développement | inutile (toujours exposée) | `true` pour la démo |
-| `RateLimiting:Auth:PermitLimit`, `RateLimiting:Auth:WindowSeconds` (`RateLimiting__Auth__...`) | Limite d'appels par IP sur l'inscription et la connexion | 20 par 60 s (défaut) | 20 par 60 s (défaut) |
+| `Jwt:SigningKey` (`Jwt__SigningKey`) | JWT signing key | user-secrets | environment variable or secret vault |
+| `SeedAdmin:Email`, `SeedAdmin:Password` (`SeedAdmin__Email`, `SeedAdmin__Password`) | Administrator account created at startup | user-secrets | environment variables |
+| `SeedDemoData` | Loads demo customers | `true` (set in `launchSettings.json`) | unset or `false` |
+| `OpenApi:Enabled` (`OpenApi__Enabled`) | Exposes the OpenAPI description and Scalar outside development | not needed (always exposed) | `true` for the demo |
+| `RateLimiting:Auth:PermitLimit`, `RateLimiting:Auth:WindowSeconds` (`RateLimiting__Auth__...`) | Calls allowed per IP on registration and login | 20 per 60 s (default) | 20 per 60 s (default) |
 
-Le compte administrateur est créé **une seule fois** : si l'e-mail existe déjà, le mot de passe n'est pas relu, donc modifier `SeedAdmin:Password` plus tard ne change pas le mot de passe en base. L'application refuse de démarrer si l'e-mail ou le mot de passe est absent. Aucun de ces secrets ne doit figurer dans `appsettings.json` ni dans le dépôt.
+The administrator account is created **only once**: if the email already exists, the password is not read again, so changing `SeedAdmin:Password` later does not change the password in the database. The application refuses to start if the email or the password is missing. None of these secrets may appear in `appsettings.json` or in the repository.
 
-### Lancer avec Docker (environnement local)
+### Running with Docker (local environment)
 
-Prérequis : Docker Desktop. Le `docker-compose.yml` démarre trois éléments : **nginx** (reverse proxy HTTPS), l'**API** et **SQL Server**. Les secrets sont lus dans un fichier `.env` (ignoré par git).
+Prerequisite: Docker Desktop. The `docker-compose.yml` starts three components: **nginx** (HTTPS reverse proxy), the **API** and **SQL Server**. Secrets are read from a `.env` file (ignored by git).
 
 ```bash
-cp .env.example .env     # puis renseigner les valeurs
+cp .env.example .env     # then fill in the values
 docker compose up --build
 ```
 
-L'API est alors disponible sur `https://localhost:9443`. nginx termine le HTTPS avec un certificat **auto-signé** (généré au premier lancement) puis transmet les requêtes en HTTP à l'API sur le réseau interne Docker ; l'API n'est pas exposée directement. Il faut donc accepter l'avertissement du navigateur, ou désactiver la vérification du certificat dans le client de test.
+The API is then available at `https://localhost:9443`. nginx terminates HTTPS with a **self-signed** certificate (generated on first start) and forwards requests over HTTP to the API on the internal Docker network; the API is not exposed directly. You therefore need to accept the browser warning, or disable certificate verification in the test client.
 
-| Variable du `.env` | Rôle |
+| `.env` variable | Purpose |
 |---|---|
-| `SQL_PASSWORD` | Mot de passe du compte `sa` de SQL Server (8 caractères minimum, majuscule, minuscule, chiffre, symbole) |
-| `JWT_SIGNING_KEY` | Clé de signature des JWT (32 caractères minimum) |
-| `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD` | Compte administrateur créé au démarrage |
-| `HTTPS_PORT` | Port HTTPS sur la machine hôte (9443 par défaut) |
+| `SQL_PASSWORD` | Password of the SQL Server `sa` account (at least 8 characters, upper case, lower case, digit, symbol) |
+| `JWT_SIGNING_KEY` | JWT signing key (at least 32 characters) |
+| `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD` | Administrator account created at startup |
+| `HTTPS_PORT` | HTTPS port on the host machine (9443 by default) |
 
-Le fichier Compose active des réglages réservés au local : `ApplyMigrationsOnStartup=true` (création du schéma au démarrage, car une base neuve est vide) et `SeedDemoData=true`. Sur un serveur de test ou de production, ils restent absents ou à `false`. nginx transmet le schéma d'origine dans `X-Forwarded-Proto` ; l'API le prend en compte grâce à `ASPNETCORE_FORWARDEDHEADERS_ENABLED=true`, ce qui rend le cookie `Secure` du refresh token utilisable et évite toute redirection HTTPS inutile.
+The Compose file enables settings reserved for local use: `ApplyMigrationsOnStartup=true` (schema created at startup, because a new database is empty) and `SeedDemoData=true`. On a test or production server they stay unset or `false`. nginx passes the original scheme in `X-Forwarded-Proto`; the API takes it into account thanks to `ASPNETCORE_FORWARDEDHEADERS_ENABLED=true`, which makes the `Secure` refresh token cookie usable and avoids any needless HTTPS redirect.
 
-### Déploiement sur Azure
+### Deployment on Azure
 
-L'API tourne sur **Azure Container Apps** (environnement à la consommation, de 0 à 1 réplique) avec **Azure SQL** (offre gratuite serverless, pause automatique).
+The API runs on **Azure Container Apps** (consumption environment, 0 to 1 replica) with **Azure SQL** (free serverless offer, automatic pause).
 
-- **Secrets** : la clé JWT, le mot de passe de l'administrateur et la chaîne de connexion sont dans **Azure Key Vault** ; l'application les lit avec son **identité managée** (lecture seule).
-- **Base de données** : l'application se connecte à Azure SQL **sans mot de passe**, avec son identité managée (`Authentication=Active Directory Managed Identity`) ; le serveur n'accepte que l'authentification Microsoft Entra.
-- **Livraison continue** : un push sur `main` lance les tests, publie l'image Docker sur GitHub Container Registry (tag `sha-<commit>`) puis déploie cette image sur Azure. GitHub s'authentifie auprès d'Azure par identité fédérée (OIDC), sans secret stocké.
-- **Coûts** : zéro réplique au repos, une réplique maximale, alertes de budget mensuel.
+- **Secrets**: the JWT key, the administrator password and the connection string are in **Azure Key Vault**; the application reads them with its **managed identity** (read-only).
+- **Database**: the application connects to Azure SQL **without a password**, using its managed identity (`Authentication=Active Directory Managed Identity`); the server only accepts Microsoft Entra authentication.
+- **Continuous delivery**: a push to `main` runs the tests, publishes the Docker image to GitHub Container Registry (tag `sha-<commit>`) and deploys that image to Azure. GitHub authenticates to Azure with a federated identity (OIDC), with no stored secret.
+- **Costs**: zero replicas when idle, one replica at most, monthly budget alerts.
 
-Compromis assumé : la règle de pare-feu SQL « services Azure » reste ouverte, car les adresses de sortie d'une Container App en mode consommation ne sont pas fixes ; l'accès exige de toute façon un jeton Microsoft Entra valide pour l'identité de l'application.
+Accepted trade-off: the SQL firewall rule "Azure services" stays open, because the outbound addresses of a Container App in consumption mode are not fixed; access still requires a valid Microsoft Entra token for the application's identity.
 
-### Données de démonstration (catalogue)
+### Demo data (catalogue)
 
-`scripts/seed-demo-produits.sh` crée 20 produits via l'API avec le compte administrateur (le mot de passe est lu dans Key Vault). Le passage par l'API, et non par un `INSERT` SQL, conserve la traçabilité : mouvement de stock « stock initial » et journal d'audit sont écrits comme pour une vraie création. Le script est rejouable : un produit déjà présent est ignoré.
+`scripts/seed-demo-produits.sh` creates 20 products through the API with the administrator account (the password is read from Key Vault). Going through the API rather than a SQL `INSERT` preserves traceability: the "initial stock" stock movement and the audit log are written exactly as for a real creation. The script can be rerun safely: a product that already exists is skipped.
 
 ```bash
-export ADMIN_EMAIL="<e-mail du compte administrateur>"
+export ADMIN_EMAIL="<administrator account email>"
 bash scripts/seed-demo-produits.sh
 ```
 
 ## Tests
 
-La solution contient **plus de 200 tests** (xUnit, Moq) :
+The solution contains **more than 200 tests** (xUnit, Moq):
 
-- **Tests unitaires** : services (`StockService`, `CommandeService`, `AuthService`), cache, hash, décodage de la `RowVersion`.
-- **Tests d'intégration** (`WebApplicationFactory`) : l'API complète démarre en mémoire avec le vrai pipeline HTTP, le vrai JWT et une **vraie base SQL Server temporaire**, créée puis supprimée à la fin. Ils couvrent l'authentification et la rotation des tokens, les droits d'accès, l'idempotence, la concurrence (409) et la journalisation en base.
+- **Unit tests**: services (`StockService`, `CommandeService`, `AuthService`), cache, hash, `RowVersion` decoding.
+- **Integration tests** (`WebApplicationFactory`): the complete API starts in memory with the real HTTP pipeline, the real JWT and a **real temporary SQL Server database**, created and then deleted at the end. They cover authentication and token rotation, access rights, idempotency, concurrency (409) and database logging.
 
 ```bash
 dotnet test
 ```
 
-Par défaut, les tests d'intégration utilisent SQL Server LocalDB. La variable d'environnement `MIGAPI_TEST_CONNECTION` permet d'indiquer un autre serveur ; seul le nom de la base est remplacé, et la base de développement n'est jamais utilisée.
+By default, the integration tests use SQL Server LocalDB. The `MIGAPI_TEST_CONNECTION` environment variable lets you point to another server; only the database name is replaced, and the development database is never used.
 
-### Tests fonctionnels (Talend API Tester)
+### Functional tests (Talend API Tester)
 
-Six scénarios (authentification, produits, commandes et stock, isolation entre utilisateurs, clients, stock) rejouent l'API déployée sur le serveur de test. Ils utilisent un environnement Talend avec `adminEmail`, `adminPassword` et `runId` (à renseigner soi-même ; aucun secret n'est stocké dans le fichier de scénarios). **Avant chaque nouveau lancement d'un scénario déjà exécuté, changer la valeur de `runId`** (par exemple `r1`, `r2`, `r3`…) dans l'environnement Talend : les comptes créés à l'inscription et les clés d'idempotence en sont dérivés, donc rejouer avec la même valeur provoque des conflits (compte déjà existant, clé déjà utilisée) qui font échouer le scénario sans que l'API soit en cause.
+Six scenarios (authentication, products, orders and stock, isolation between users, customers, stock) replay the API deployed on the test server. They use a Talend environment with `adminEmail`, `adminPassword` and `runId` (to be filled in yourself; no secret is stored in the scenario file). **Before every new run of a scenario that has already been executed, change the value of `runId`** (for example `r1`, `r2`, `r3`…) in the Talend environment: the accounts created at registration and the idempotency keys are derived from it, so replaying with the same value causes conflicts (account already exists, key already used) that make the scenario fail without the API being at fault.
 
-## Intégration continue
+## Continuous integration
 
-Le workflow GitHub Actions (`.github/workflows/ci.yml`) enchaîne trois jobs :
+The GitHub Actions workflow (`.github/workflows/ci.yml`) chains three jobs:
 
-1. **tests** : compile la solution et lance tous les tests, avec un conteneur SQL Server pour les tests d'intégration (à chaque push et à chaque pull request) ;
-2. **docker** : construit l'image Docker ; sur `main`, la publie sur GitHub Container Registry (`sha-<commit>` et `latest`) ;
-3. **deploy** : sur `main` uniquement, met à jour l'application Azure Container Apps avec l'image du commit, puis vérifie qu'elle répond.
+1. **tests**: builds the solution and runs all tests, with a SQL Server container for the integration tests (on every push and every pull request);
+2. **docker**: builds the Docker image; on `main`, publishes it to GitHub Container Registry (`sha-<commit>` and `latest`);
+3. **deploy**: on `main` only, updates the Azure Container Apps application with the commit's image, then checks that it responds.
 
-## Limites connues et feuille de route
+## Known limitations and roadmap
 
-- Une mise à jour (`PUT`) avec une `RowVersion` périmée mais un contenu identique à l'état courant renvoie 200 : rien n'est écrit, donc aucun conflit n'est détecté.
-- Cache en mémoire du processus : un cache distribué (Redis) sera nécessaire avec plusieurs instances.
-- Les migrations s'exécutent au démarrage de l'API (`ApplyMigrationsOnStartup`) : l'identité de l'application a donc le droit de modifier le schéma. Les sortir dans une étape dédiée du pipeline permettrait de réduire ses droits à la lecture et à l'écriture.
-- Réalisé : serveur de test (Windows Server 2022, IIS), conteneurisation (Docker, nginx), Azure Container Apps, Azure SQL, Key Vault, identité managée, déploiement continu, limitation de débit.
-- À venir : clés Data Protection persistantes, Application Insights, rôle Azure personnalisé pour le pipeline, puis Kubernetes (AKS).
+- An update (`PUT`) with a stale `RowVersion` but content identical to the current state returns 200: nothing is written, so no conflict is detected.
+- In-process memory cache: a distributed cache (Redis) will be needed with several instances.
+- Migrations run when the API starts (`ApplyMigrationsOnStartup`): the application's identity therefore has the right to change the schema. Moving them to a dedicated pipeline step would let its rights be reduced to read and write.
+- Done: test server (Windows Server 2022, IIS), containerisation (Docker, nginx), Azure Container Apps, Azure SQL, Key Vault, managed identity, continuous delivery, rate limiting.
+- Upcoming: persistent Data Protection keys, Application Insights, custom Azure role for the pipeline, then Kubernetes (AKS).
 
-## Auteur
+## Author
 
-Oumar Diagne, développeur full-stack C# / ASP.NET Core / Angular, certifié Microsoft Azure Developer Associate (AZ-204).
+Oumar Diagne, full-stack C# / ASP.NET Core / Angular developer, Microsoft Certified: Azure Developer Associate (AZ-204).
