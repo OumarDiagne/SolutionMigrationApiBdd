@@ -1,6 +1,6 @@
 🇬🇧 [English](README.md) · 🇫🇷 Français · 🇮🇹 [Italiano](README.it.md)
 
-# MigAgiBdd : API de gestion de commandes et de stock
+# MigApiBdd : API de gestion de commandes et de stock
 
 ![CI](https://github.com/OumarDiagne/SolutionMigrationApiBdd/actions/workflows/ci.yml/badge.svg)
 
