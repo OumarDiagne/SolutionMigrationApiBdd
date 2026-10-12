@@ -1,6 +1,6 @@
 🇬🇧 [English](README.md) · 🇫🇷 [Français](README.fr.md) · 🇮🇹 Italiano
 
-# MigAgiBdd: API per la gestione di ordini e magazzino
+# MigApiBdd: API per la gestione di ordini e magazzino
 
 ![CI](https://github.com/OumarDiagne/SolutionMigrationApiBdd/actions/workflows/ci.yml/badge.svg)
 
